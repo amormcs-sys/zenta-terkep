@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zenta Község - Mezőőrszolgálat</title>
+    
+    <link rel="stylesheet" href="http://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="http://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <link rel="stylesheet" href="http://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
+    <script src="http://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+    <script src="http://cdnjs.cloudflare.com/ajax/libs/togeojson/0.16.0/togeojson.min.js"></script>
+
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; width: 100%; font-family: Arial, sans-serif; background-color: #cccccc; }
+        #map { height: 100%; width: 100%; background: #e5e3df; }
+        #controls { position: absolute; bottom: 20px; left: 20px; z-index: 1000; background: white; padding: 15px; border-radius: 8px; box-shadow: 0 0 15px rgba(0,0,0,0.3); width: 280px; max-height: 80vh; overflow-y: auto; }
+        #search-panel { position: absolute; top: 20px; left: 60px; z-index: 1000; background: white; padding: 12px; border-radius: 8px; box-shadow: 0 0 15px rgba(0,0,0,0.3); display: flex; flex-direction: column; gap: 8px; width: 220px; }
+        .search-group { display: flex; gap: 5px; }
+        .search-input { width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; }
+        .search-btn { padding: 6px 10px; background:#28a745; color:white; border:none; border-radius:4px; cursor:pointer; font-weight: bold; font-size: 12px; }
+        .legend-item { display: flex; align-items: center; margin-bottom: 5px; font-size: 12px; }
+        .color-box { width: 20px; height: 10px; margin-right: 10px; border-radius: 2px; }
+        .btn { width:100%; padding:8px; border:none; border-radius:4px; cursor:pointer; font-weight:bold; margin-top: 5px; }
+        .admin-only { display: none; }
+    </style>
+</head>
+<body>
+
+    <div id="search-panel">
+        <div class="search-group">
+            <input type="text" id="search-input" class="search-input" placeholder="Utca vagy dűlő keresése...">
+            <button onclick="kereses()" class="search-btn">Térkép</button>
+        </div>
+        <hr style="margin: 2px 0; border: 0; border-top: 1px solid #eee;">
+        <div style="font-size: 11px; font-weight: bold; color: #333;">eKatastar Tulajdonos Kereső:</div>
+        <select id="kataszter-ko" class="search-input">
+            <option value="705764">Zenta (Senta)</option>
+            <option value="705756">Tornyos (Tornjoš)</option>
+            <option value="705730">Kevi (Kevi)</option>
+            <option value="705748">Bogaras (Bogaraš)</option>
+        </select>
+        <div class="search-group">
+            <input type="number" id="parcella-input" class="search-input" placeholder="Parcella száma...">
+            <button onclick="kataszterKeres()" class="search-btn" style="background:#007bff;">Katastar 🇷🇸</button>
+        </div>
+    </div>
+
+    <div id="map"></div>
+
+    <div id="controls">
+        <h4>Zenta Nyilvántartás</h4>
+        <div id="login-section">
+            <button onclick="adminBelep()" class="btn" style="background:#6c757d; color:white;">Adminisztrátori Belépés</button>
+        </div>
+        <div id="admin-status" style="font-size:12px; color:green; font-weight:bold; margin-bottom:5px; display:none;">Módosítás engedélyezve (Admin)</div>
+        <hr>
+        <h5>Jelmagyarázat (Utak)</h5>
+        <div class="legend-item"><div class="color-box" style="background: red;"></div> Piros: Nincs kész</div>
+        <div class="legend-item"><div class="color-box" style="background: green;"></div> Zöld: Kész van</div>
+        <div class="legend-item"><div class="color-box" style="background: purple;"></div> Lila: Döntés előtt áll</div>
+        <div class="legend-item"><div class="color-box" style="background: yellow;"></div> Sárga: Salakos jó állapotú</div>
+        <div class="legend-item"><div class="color-box" style="background: orange;"></div> Narancs: Karbantartást igényel</div>
+        <div class="legend-item"><div class="color-box" style="background: blue;"></div> Kék: Földes út kész</div>
+        <hr>
+        <label style="font-size:12px; font-weight:bold; display:block; margin-bottom:2px;">Adatok betöltése (.json / .kml):</label>
+        <input type="file" id="fajlBeolvas" accept=".kml,.json" style="font-size:11px; width:100%; margin-bottom:10px;">
+        <div class="admin-only">
+            <button onclick="mentes()" class="btn" style="background:#007bff; color:white;">Térkép Mentése a Gépre</button>
+        </div>
+    </div>
+
+    <script>
+        // Térkép létrehozása fix koordinátákkal
+        var map = L.map('map', { minZoom: 2, maxZoom: 18 }).setView([45.9275, 20.0889], 13);
+
+        // Kifejezetten nyitott, nem korlátozott térképi rétegek (HTTP és HTTPS alternatíva)
+        var osm = L.tileLayer('http://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '© OpenStreetMap'
+        }).addTo(map);
+
+        var satellite = L.tileLayer('http://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            attribution: 'Tiles © Esri'
+        });
+
+        var geoSrbijaParcele = L.tileLayer.wms("http://geosrbija.rgz.gov.rs/geoserver/rgz/wms", {
+            layers: 'rgz:parcele',
+            format: 'image/png',
+            transparent: true,
+            version: '1.1.1',
+            attribution: '© GeoSrbija'
+        });
+
+        var utHalozat = new L.FeatureGroup().addTo(map);
+        var vizVezetek = new L.FeatureGroup();
+        var kanalizacio = new L.FeatureGroup();
+        var hidransok = new L.FeatureGroup();
+
+        L.control.layers(
+            { "Utcai nézet": osm, "Műholdas nézet": satellite },
+            { "GeoSrbija Parcellák 🇷🇸": geoSrbijaParcele, "Közúti hálózat": utHalozat, "Vízvezetékek": vizVezetek, "Kanalizáció": kanalizacio, "Hidránsok": hidransok }
+        ).addTo(map);
+
+        var drawControl = new L.Control.Draw({
+            draw: { polyline: true, polygon: false, circle: false, marker: true, circlemarker: false, rectangle: false },
+            edit: { featureGroup: utHalozat }
+        });
+
+        function adminBelep() {
+            var jelszo = prompt("Kérjük az adminisztrátori jelszót:");
+            if (jelszo === "zenta2026") {
+                document.getElementById("login-section").style.display = "none";
+                document.getElementById("admin-status").style.display = "block";
+                map.addControl(drawControl);
+                var adminGombok = document.querySelectorAll('.admin-only');
+                adminGombok.forEach(function(el) { el.style.display = 'block'; });
+                alert("Sikeres belépés!");
+            } else { alert("Hibás jelszó!"); }
+        }
+
+        function kataszterKeres() {
+            var opstinaId = "70890"; 
+            var koId = document.getElementById("kataszter-ko").value; 
+            var parcelaBr = document.getElementById("parcella-input").value; 
+            if(!parcelaBr) { alert("Kérjük írd be a parcella számát!"); return; }
+            var url = `https://katastar.rgz.gov.rs/eKatastarPublic/FindParcelResult.aspx?opstinaID=${opstinaId}&koID=${koId}&parcelaBr=${parcelaBr}`;
+            window.open(url, '_blank');
+        }
+
+        function fixDriveLink(link) {
+            if (!link) return "";
+            if (link.includes("drive.google.com")) {
+                var matches = link.match(/\/d\/([a-zA-Z0-9-_]+)/);
+                if (matches && matches[1]) { return "https://lh3.googleusercontent.com/d/" + matches[1]; }
+            }
+            return link;
+        }
+
+        map.on(L.Draw.Event.CREATED, function (e) {
+            var layer = e.layer;
+            var tipus = e.layerType;
+            if (tipus === 'marker') {
+                var hNev = prompt("Pont megnevezése:", "Hidráns");
+                var hLeiras = prompt("Megjegyzés:", "Működőképes");
+                layer.bindPopup(`<b>${hNev}</b><br>${hLeiras}`);
+                layer.options.customData = { nev: hNev, statusz: "hidrans", leiras: hLeiras, kep: "" };
+                hidransok.addLayer(layer);
+            } else {
+                var nev = prompt("Út neve / Dűlő száma:", "Új út");
+                var statusz = prompt("Állapot (piros / zold / lila / sarga / narancs / kek):", "piros");
+                var leiras = prompt("Karbantartás leírása:", "Felületi útkarbantartás");
+                var driveLinkRaw = prompt("Google Drive kép linkje:", "");
+                var joDriveKep = fixDriveLink(driveLinkRaw);
+                var szin = "red";
+                if(statusz == "zold") szin = "green";
+                if(statusz == "lila") szin = "purple";
+                if(statusz == "sarga") szin = "yellow";
+                if(statusz == "narancs") col = "orange";
+                if(statusz == "kek") szin = "blue";
+                layer.setStyle({ color: szin, weight: 5 });
+                var pop = `<b>${nev}</b><br>${leiras}`;
+                if(joDriveKep) pop += `<br><br><img src="${joDriveKep}" width="260px" style="border-radius:4px;">`;
+                layer.bindPopup(pop);
+                layer.options.customData = { nev: nev, statusz: statusz, leiras: leiras, kep: joDriveKep };
+                utHalozat.addLayer(layer);
+            }
+        });
+
+        function kereses() {
+            var keresettSzoveg = document.getElementById("search-input").value.toLowerCase();
+            var talalat = false;
+            utHalozat.eachLayer(function(layer) {
+                if (layer.options.customData && layer.options.customData.nev.toLowerCase().includes(keresettSzoveg)) {
+                    map.fitBounds(layer.getBounds());
+                    layer.openPopup();
+                    talalat = true;
+                }
+            });
+            if(!talalat) alert("Nincs ilyen nevű út!");
+        }
+
+        document.getElementById('fajlBeolvas').addEventListener('change', function(e) {
+            var fajl = e.target.files[0];
+            if (!fajl) return;
+            var reader = new FileReader();
+            reader.onload = function(e) {
+                var tartalom = e.target.result;
+                if (fajl.name.endsWith('.kml')) {
+                    var parser = new DOMParser();
+                    var xml = parser.parseFromString(tartalom, "text/xml");
+                    var geojson = toGeoJSON.kml(xml);
+                    L.geoJSON(geojson, {
+                        style: function() { return { color: "gray", weight: 4 }; },
+                        onEachFeature: function(feature, layer) {
+                            var nev = feature.properties.name || "Út";
+                            var leiras = feature.properties.description || "";
+                            layer.bindPopup(`<b>${nev}</b><br>${leiras}`);
+                            layer.options.customData = { nev: nev, statusz: "szurke", leiras: leiras, kep: "" };
+                            utHalozat.addLayer(layer);
+                        }
+                    });
+                } else if (fajl.name.endsWith('.json')) {
+                    var adatok = JSON.parse(tartalom);
+                    L.geoJSON(adatok, {
+                        style: function(feature) {
+                            var s = feature.properties.statusz || "piros";
+                            var col = "red";
+                            if(s == "zold") col = "green";
+                            if(s == "lila") col = "purple";
+                            if(s == "sarga") col = "yellow";
+                            if(s == "narancs") col = "orange";
+                            if(s == "kek") col = "blue";
+                            return { color: col, weight: 5 };
+                        },
+                        onEachFeature: function(feature, layer) {
+                            var p = feature.properties;
+                            var pop = `<b>${p.nev || "Út"}</b><br>${p.leiras || ""}`;
+                            if(p.kep) pop += `<br><br><img src="${p.kep}" width="260px" style="border-radius:4px;">`;
+                            layer.bindPopup(pop);
+                            layer.options.customData = p;
+                            if(p.statusz === "hidrans") { hidransok.addLayer(layer); } else { utHalozat.addLayer(layer); }
+                        }
+                    });
+                }
+            };
+            reader.readAsText(fajl);
+        });
+
+        function mentes() {
+            var adatok = utHalozat.toGeoJSON();
+            adatok.features.forEach(function(f, index) {
+                var layers = utHalozat.getLayers();
+                if(layers[index] && layers[index].options.customData) { f.properties = layers[index].options.customData; }
+            });
+            var dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(adatok));
+            var downloadAnchor = document.createElement('a');
+            downloadAnchor.setAttribute("href", dataStr);
+            downloadAnchor.setAttribute("download", "zenta_utak_mentes.json");
+            document.body.appendChild(downloadAnchor);
+            downloadAnchor.click();
+            downloadAnchor.remove();
+        }
+    </script>
+</body>
+</html>
