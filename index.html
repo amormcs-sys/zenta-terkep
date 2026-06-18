@@ -10,6 +10,7 @@
 
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/togeojson/0.16.0/togeojson.min.js"></script>
 
     <style>
         body, html { margin: 0; padding: 0; height: 100%; width: 100%; font-family: Arial, sans-serif; background-color: #cccccc; }
@@ -216,21 +217,24 @@
                         var parser = new DOMParser();
                         var xml = parser.parseFromString(tartalom, "text/xml");
                         
-                        // Szuper-mély kereső az összes lehetséges koordináta-címkére
-                        var coordNodes = xml.getElementsByTagName("coordinates");
-                        if(coordNodes.length === 0) {
-                            alert("Nem található berajzolt elem vagy koordináta ebben a KML fájlban! Ellenőrizd, hogy a tiszta KML exportálást választottad-e a Google-ben."); return;
+                        // Ellenőrizzük, hogy érvényes XML-e, nem-e KMZ-t kaptunk véletlenül
+                        if (xml.getElementsByTagName("parsererror").length > 0) {
+                            alert("Hiba: Ez a fájl sérült vagy nem tiszta KML! Ha Google-ből mentetted, győződj meg róla, hogy a letöltésnél a 'KML-fájlba' opciót választottad, nem a KMZ-t.");
+                            return;
+                        }
+
+                        var geojson = toGeoJSON.kml(xml);
+                        
+                        if (!geojson || !geojson.features || geojson.features.length === 0) {
+                            alert("A fájl beolvasható, de nem találtam benne egyetlen berajzolt vonalat vagy pontot sem!");
+                            return;
                         }
 
                         var szamlalo = 0;
-                        var placemarks = xml.getElementsByTagName("Placemark");
-
-                        for (var i = 0; i < placemarks.length; i++) {
-                            try {
-                                var p = placemarks[i];
-                                var nev = p.getElementsByTagName("name")[0] ? p.getElementsByTagName("name")[0].textContent : "Google Elem";
-                                var leiras = p.getElementsByTagName("description")[0] ? p.getElementsByTagName("description")[0].textContent : "";
-                                
+                        var ideiglenesCsoport = L.geoJSON(geojson, {
+                            onEachFeature: function(feature, layer) {
+                                var nev = feature.properties.name || "Google Út";
+                                var leiras = feature.properties.description || "";
                                 var statusz = "piros";
                                 var l = leiras.toLowerCase();
                                 if(l.includes("zold") || l.includes("kész")) statusz = "zold";
@@ -242,60 +246,27 @@
                                 var reteg = "ut";
                                 if(l.includes("víz") || l.includes("viz")) reteg = "viz";
                                 if(l.includes("csatorna") || l.includes("kanal")) reteg = "kanal";
+                                if(feature.geometry.type === "Point") reteg = "hidrans";
 
-                                // Keresünk koordinátát a placemarkon belül (bárhol is rejtőzik)
-                                var cNode = p.getElementsByTagName("coordinates")[0];
-                                if(!cNode) continue;
-                                var coordStr = cNode.textContent.trim();
+                                layer.options.customData = { nev: nev, statusz: statusz, leiras: leiras, kep: "", reteg: reteg };
                                 
-                                // Kitakarítjuk a felesleges szóközöket és formázásokat
-                                var rows = coordStr.replace(/\s+/g, ' ').split(' ');
-                                var latlngs = [];
-                                
-                                for(var j=0; j<rows.length; j++) {
-                                    if(!rows[j]) continue;
-                                    var parts = rows[j].split(",");
-                                    if(parts.length >= 2) {
-                                        var lat = parseFloat(parts[1]);
-                                        var lng = parseFloat(parts[0]);
-                                        if(!isNaN(lat) && !isNaN(lng)) {
-                                            latlngs.push([lat, lng]);
-                                        }
-                                    }
-                                }
-
-                                if(latlngs.length === 1) {
-                                    // Ha csak 1 koordináta van, az egy PONT (Hidráns / Marker)
-                                    var marker = L.marker(latlngs[0]);
-                                    marker.options.customData = { nev: nev, statusz: "hidrans", leiras: leiras, kep: "", reteg: "hidrans" };
-                                    hidransok.addLayer(marker);
-                                    szamlalo++;
-                                } else if(latlngs.length > 1) {
-                                    // Ha több, az vonal vagy terület
-                                    var polyline = L.polyline(latlngs, { color: sorszín(statusz, reteg), weight: 6, opacity: 0.9 });
-                                    polyline.options.customData = { nev: nev, statusz: statusz, leiras: leiras, kep: "", reteg: reteg };
-                                    
-                                    if(reteg === "viz") vizVezetek.addLayer(polyline);
-                                    else if(reteg === "kanal") kanalizacio.addLayer(polyline);
-                                    else utHalozat.addLayer(polyline);
-                                    szamlalo++;
-                                }
-                            } catch(e) {
-                                console.log("Hiba egy elemnél", e);
+                                if(reteg === "hidrans") { hidransok.addLayer(layer); }
+                                else if(reteg === "viz") { layer.setStyle({color:"cyan", weight:5}); vizVezetek.addLayer(layer); }
+                                else if(reteg === "kanal") { layer.setStyle({color:"brown", weight:5}); kanalizacio.addLayer(layer); }
+                                else { layer.setStyle({color: sorszín(statusz, "ut"), weight:5}); utHalozat.addLayer(layer); }
+                                szamlalo++;
                             }
-                        }
+                        });
 
                         frissitPopupokat();
-                        alert("Siker! " + szamlalo + " Google elemet mély-kereséssel beolvastam!");
+                        alert("Siker! Összesen " + szamlalo + " elemet sikeresen importáltam a Google fájlból.");
 
+                        // AUTOMATIKUS ODAUGRÁS AZ UTRA
                         var bounds = L.featureGroup([utHalozat, vizVezetek, kanalizacio, hidransok]).getBounds();
-                        if (bounds.isValid()) {
-                            map.invalidateSize();
-                            map.fitBounds(bounds, { padding: [50, 50] });
-                        }
+                        if (bounds.isValid()) { map.fitBounds(bounds); }
 
                     } catch(err) {
-                        alert("Hiba történt a KML feldolgozásakor: " + err.message);
+                        alert("Váratlan hiba történt a KML feldolgozása közben: " + err.message);
                     }
 
                 } else if (fajl.name.endsWith('.json')) {
@@ -326,3 +297,13 @@
                     if(layer.options.customData) {
                         var geojson = layer.toGeoJSON(); geojson.properties = layer.options.customData; gyujto.features.push(geojson);
                     }
+                });
+            });
+            var dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(gyujto));
+            var downloadAnchor = document.createElement('a');
+            downloadAnchor.setAttribute("href", dataStr); downloadAnchor.setAttribute("download", "zenta_teljes_nyilvantartas.json");
+            document.body.appendChild(downloadAnchor); downloadAnchor.click(); downloadAnchor.remove();
+        }
+    </script>
+</body>
+</html>
