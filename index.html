@@ -5,12 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Zenta Község - Mezőőrszolgálat</title>
     
-    <link rel="stylesheet" href="http://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <script src="http://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-    <link rel="stylesheet" href="http://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
-    <script src="http://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
-    <script src="http://cdnjs.cloudflare.com/ajax/libs/togeojson/0.16.0/togeojson.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/togeojson/0.16.0/togeojson.min.js"></script>
 
     <style>
         body, html { margin: 0; padding: 0; height: 100%; width: 100%; font-family: Arial, sans-serif; background-color: #cccccc; }
@@ -72,20 +72,19 @@
     </div>
 
     <script>
-        // Térkép létrehozása fix koordinátákkal
         var map = L.map('map', { minZoom: 2, maxZoom: 18 }).setView([45.9275, 20.0889], 13);
 
-        // Kifejezetten nyitott, nem korlátozott térképi rétegek (HTTP és HTTPS alternatíva)
-        var osm = L.tileLayer('http://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        // Minden csempeszerver link átállítva biztonságos HTTPS-re
+        var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             maxZoom: 19,
             attribution: '© OpenStreetMap'
         }).addTo(map);
 
-        var satellite = L.tileLayer('http://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        var satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
             attribution: 'Tiles © Esri'
         });
 
-        var geoSrbijaParcele = L.tileLayer.wms("http://geosrbija.rgz.gov.rs/geoserver/rgz/wms", {
+        var geoSrbijaParcele = L.tileLayer.wms("https://geosrbija.rgz.gov.rs/geoserver/rgz/wms", {
             layers: 'rgz:parcele',
             format: 'image/png',
             transparent: true,
@@ -157,7 +156,7 @@
                 if(statusz == "zold") szin = "green";
                 if(statusz == "lila") szin = "purple";
                 if(statusz == "sarga") szin = "yellow";
-                if(statusz == "narancs") col = "orange";
+                if(statusz == "narancs") szin = "orange";
                 if(statusz == "kek") szin = "blue";
                 layer.setStyle({ color: szin, weight: 5 });
                 var pop = `<b>${nev}</b><br>${leiras}`;
