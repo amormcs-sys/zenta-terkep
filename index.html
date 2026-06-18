@@ -198,4 +198,131 @@
             var keresettSzoveg = document.getElementById("search-input").value.toLowerCase(); var talalat = false;
             utHalozat.eachLayer(function(layer) {
                 if (layer.options.customData && layer.options.customData.nev.toLowerCase().includes(keresettSzoveg)) {
-                    map.fitBounds(layer.getBounds()); layer.openPopup(); tal
+                    map.fitBounds(layer.getBounds()); layer.openPopup(); talalat = true;
+                }
+            });
+            if(!talalat) alert("Nincs ilyen nevű út!");
+        }
+
+        document.getElementById('fajlBeolvas').addEventListener('change', function(e) {
+            var fajl = e.target.files[0]; if (!fajl) return;
+            var reader = new FileReader();
+            reader.onload = function(e) {
+                var tartalom = e.target.result;
+                utHalozat.clearLayers(); vizVezetek.clearLayers(); kanalizacio.clearLayers(); hidransok.clearLayers();
+
+                if (fajl.name.endsWith('.kml')) {
+                    try {
+                        var parser = new DOMParser();
+                        var xml = parser.parseFromString(tartalom, "text/xml");
+                        
+                        // Szuper-mély kereső az összes lehetséges koordináta-címkére
+                        var coordNodes = xml.getElementsByTagName("coordinates");
+                        if(coordNodes.length === 0) {
+                            alert("Nem található berajzolt elem vagy koordináta ebben a KML fájlban! Ellenőrizd, hogy a tiszta KML exportálást választottad-e a Google-ben."); return;
+                        }
+
+                        var szamlalo = 0;
+                        var placemarks = xml.getElementsByTagName("Placemark");
+
+                        for (var i = 0; i < placemarks.length; i++) {
+                            try {
+                                var p = placemarks[i];
+                                var nev = p.getElementsByTagName("name")[0] ? p.getElementsByTagName("name")[0].textContent : "Google Elem";
+                                var leiras = p.getElementsByTagName("description")[0] ? p.getElementsByTagName("description")[0].textContent : "";
+                                
+                                var statusz = "piros";
+                                var l = leiras.toLowerCase();
+                                if(l.includes("zold") || l.includes("kész")) statusz = "zold";
+                                else if(l.includes("lila")) statusz = "lila";
+                                else if(l.includes("sarga") || l.includes("salak")) statusz = "sarga";
+                                else if(l.includes("narancs")) statusz = "narancs";
+                                else if(l.includes("kek") || l.includes("föld")) statusz = "kek";
+
+                                var reteg = "ut";
+                                if(l.includes("víz") || l.includes("viz")) reteg = "viz";
+                                if(l.includes("csatorna") || l.includes("kanal")) reteg = "kanal";
+
+                                // Keresünk koordinátát a placemarkon belül (bárhol is rejtőzik)
+                                var cNode = p.getElementsByTagName("coordinates")[0];
+                                if(!cNode) continue;
+                                var coordStr = cNode.textContent.trim();
+                                
+                                // Kitakarítjuk a felesleges szóközöket és formázásokat
+                                var rows = coordStr.replace(/\s+/g, ' ').split(' ');
+                                var latlngs = [];
+                                
+                                for(var j=0; j<rows.length; j++) {
+                                    if(!rows[j]) continue;
+                                    var parts = rows[j].split(",");
+                                    if(parts.length >= 2) {
+                                        var lat = parseFloat(parts[1]);
+                                        var lng = parseFloat(parts[0]);
+                                        if(!isNaN(lat) && !isNaN(lng)) {
+                                            latlngs.push([lat, lng]);
+                                        }
+                                    }
+                                }
+
+                                if(latlngs.length === 1) {
+                                    // Ha csak 1 koordináta van, az egy PONT (Hidráns / Marker)
+                                    var marker = L.marker(latlngs[0]);
+                                    marker.options.customData = { nev: nev, statusz: "hidrans", leiras: leiras, kep: "", reteg: "hidrans" };
+                                    hidransok.addLayer(marker);
+                                    szamlalo++;
+                                } else if(latlngs.length > 1) {
+                                    // Ha több, az vonal vagy terület
+                                    var polyline = L.polyline(latlngs, { color: sorszín(statusz, reteg), weight: 6, opacity: 0.9 });
+                                    polyline.options.customData = { nev: nev, statusz: statusz, leiras: leiras, kep: "", reteg: reteg };
+                                    
+                                    if(reteg === "viz") vizVezetek.addLayer(polyline);
+                                    else if(reteg === "kanal") kanalizacio.addLayer(polyline);
+                                    else utHalozat.addLayer(polyline);
+                                    szamlalo++;
+                                }
+                            } catch(e) {
+                                console.log("Hiba egy elemnél", e);
+                            }
+                        }
+
+                        frissitPopupokat();
+                        alert("Siker! " + szamlalo + " Google elemet mély-kereséssel beolvastam!");
+
+                        var bounds = L.featureGroup([utHalozat, vizVezetek, kanalizacio, hidransok]).getBounds();
+                        if (bounds.isValid()) {
+                            map.invalidateSize();
+                            map.fitBounds(bounds, { padding: [50, 50] });
+                        }
+
+                    } catch(err) {
+                        alert("Hiba történt a KML feldolgozásakor: " + err.message);
+                    }
+
+                } else if (fajl.name.endsWith('.json')) {
+                    var adatok = JSON.parse(tartalom);
+                    L.geoJSON(adatok, {
+                        style: function(feature) { return { color: sorszín(feature.properties.statusz, feature.properties.reteg), weight: 5 }; },
+                        onEachFeature: function(feature, layer) {
+                            var p = feature.properties; layer.options.customData = p;
+                            if(p.reteg === "hidrans" || p.statusz === "hidrans") hidransok.addLayer(layer);
+                            else if(p.reteg === "viz") vizVezetek.addLayer(layer);
+                            else if(p.reteg === "kanal") kanalizacio.addLayer(layer);
+                            else utHalozat.addLayer(layer);
+                        }
+                    });
+                    frissitPopupokat();
+                    var bounds = L.featureGroup([utHalozat, vizVezetek, kanalizacio, hidransok]).getBounds();
+                    if (bounds.isValid()) { map.fitBounds(bounds); }
+                    alert("Mentés sikeresen betöltve!");
+                }
+            };
+            reader.readAsText(fajl);
+        });
+
+        function mentes() {
+            var gyujto = { type: "FeatureCollection", features: [] };
+            [utHalozat, vizVezetek, kanalizacio, hidransok].forEach(function(group) {
+                group.eachLayer(function(layer) {
+                    if(layer.options.customData) {
+                        var geojson = layer.toGeoJSON(); geojson.properties = layer.options.customData; gyujto.features.push(geojson);
+                    }
