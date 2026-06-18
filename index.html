@@ -10,8 +10,6 @@
 
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
-    
-    <script src="https://cdn.jsdelivr.net/npm/@tmcw/togeojson@4.5.0/dist/togeojson.umd.js"></script>
 
     <style>
         body, html { margin: 0; padding: 0; height: 100%; width: 100%; font-family: Arial, sans-serif; background-color: #cccccc; }
@@ -206,6 +204,7 @@
             if(!talalat) alert("Nincs ilyen nevű út!");
         }
 
+        // BIZTONSÁGI, KÜLSŐ KÖNYVTÁR NÉLKÜLI KML BEOLVASÓ
         document.getElementById('fajlBeolvas').addEventListener('change', function(e) {
             var fajl = e.target.files[0]; if (!fajl) return;
             var reader = new FileReader();
@@ -218,5 +217,119 @@
                         var parser = new DOMParser();
                         var xml = parser.parseFromString(tartalom, "text/xml");
                         
-                        if (xml.getElementsByTagName("parsererror").length > 0) {
-                            alert
+                        var placemarks = xml.getElementsByTagName("Placemark");
+                        if(placemarks.length === 0) {
+                            alert("Nem található berajzolt elem ebben a KML fájlban!"); return;
+                        }
+
+                        var szamlalo = 0;
+
+                        for (var i = 0; i < placemarks.length; i++) {
+                            var p = placemarks[i];
+                            var nev = p.getElementsByTagName("name")[0] ? p.getElementsByTagName("name")[0].textContent : "Google Elem";
+                            var leiras = p.getElementsByTagName("description")[0] ? p.getElementsByTagName("description")[0].textContent : "";
+                            
+                            var statusz = "piros";
+                            var l = leiras.toLowerCase();
+                            if(l.includes("zold") || l.includes("kész")) statusz = "zold";
+                            else if(l.includes("lila")) statusz = "lila";
+                            else if(l.includes("sarga") || l.includes("salak")) statusz = "sarga";
+                            else if(l.includes("narancs")) statusz = "narancs";
+                            else if(l.includes("kek") || l.includes("föld")) statusz = "kek";
+
+                            var reteg = "ut";
+                            if(l.includes("víz") || l.includes("viz")) reteg = "viz";
+                            if(l.includes("csatorna") || l.includes("kanal")) reteg = "kanal";
+
+                            // 1. HA PONT (MARKER)
+                            var point = p.getElementsByTagName("Point")[0];
+                            if(point) {
+                                var coordStr = point.getElementsByTagName("coordinates")[0].textContent.trim();
+                                var c = coordStr.split(",");
+                                var latlng = [parseFloat(c[1]), parseFloat(c[0])];
+                                var marker = L.marker(latlng);
+                                marker.options.customData = { nev: nev, statusz: "hidrans", leiras: leiras, kep: "", reteg: "hidrans" };
+                                hidransok.addLayer(marker);
+                                szamlalo++;
+                                continue;
+                            }
+
+                            // 2. HA VONAL VAGY TERÜLET (LineString / Polygon)
+                            var lineString = p.getElementsByTagName("LineString")[0] || p.getElementsByTagName("LinearRing")[0] || p.getElementsByTagName("Polygon")[0];
+                            if(lineString) {
+                                var coordNode = lineString.getElementsByTagName("coordinates")[0];
+                                if(!coordNode) continue;
+                                var coordStr = coordNode.textContent.trim();
+                                var rows = coordStr.split(/\s+/);
+                                var latlngs = [];
+                                
+                                for(var j=0; j<rows.length; j++) {
+                                    var parts = rows[j].split(",");
+                                    if(parts.length >= 2) {
+                                        latlngs.push([parseFloat(parts[1]), parseFloat(parts[0])]);
+                                    }
+                                }
+
+                                if(latlngs.length > 0) {
+                                    var polyline = L.polyline(latlngs, { color: sorszín(statusz, reteg), weight: 6, opacity: 0.9 });
+                                    polyline.options.customData = { nev: nev, statusz: statusz, leiras: leiras, kep: "", reteg: reteg };
+                                    
+                                    if(reteg === "viz") vizVezetek.addLayer(polyline);
+                                    else if(reteg === "kanal") kanalizacio.addLayer(polyline);
+                                    else utHalozat.addLayer(polyline);
+                                    szamlalo++;
+                                }
+                            }
+                        }
+
+                        frissitPopupokat();
+                        alert("Siker! " + szamlalo + " Google elemet közvetlenül beolvastam és kirajzoltam!");
+
+                        var bounds = L.featureGroup([utHalozat, vizVezetek, kanalizacio, hidransok]).getBounds();
+                        if (bounds.isValid()) {
+                            map.invalidateSize();
+                            map.fitBounds(bounds, { padding: [50, 50] });
+                        }
+
+                    } catch(err) {
+                        alert("Hiba történt a KML feldolgozásakor: " + err.message);
+                    }
+
+                } else if (fajl.name.endsWith('.json')) {
+                    var adatok = JSON.parse(tartalom);
+                    L.geoJSON(adatok, {
+                        style: function(feature) { return { color: sorszín(feature.properties.statusz, feature.properties.reteg), weight: 5 }; },
+                        onEachFeature: function(feature, layer) {
+                            var p = feature.properties; layer.options.customData = p;
+                            if(p.reteg === "hidrans" || p.statusz === "hidrans") hidransok.addLayer(layer);
+                            else if(p.reteg === "viz") vizVezetek.addLayer(layer);
+                            else if(p.reteg === "kanal") kanalizacio.addLayer(layer);
+                            else utHalozat.addLayer(layer);
+                        }
+                    });
+                    frissitPopupokat();
+                    var bounds = L.featureGroup([utHalozat, vizVezetek, kanalizacio, hidransok]).getBounds();
+                    if (bounds.isValid()) { map.fitBounds(bounds); }
+                    alert("Mentés sikeresen betöltve!");
+                }
+            };
+            reader.readAsText(fajl);
+        });
+
+        function mentes() {
+            var gyujto = { type: "FeatureCollection", features: [] };
+            [utHalozat, vizVezetek, kanalizacio, hidransok].forEach(function(group) {
+                group.eachLayer(function(layer) {
+                    if(layer.options.customData) {
+                        var geojson = layer.toGeoJSON(); geojson.properties = layer.options.customData; gyujto.features.push(geojson);
+                    }
+                });
+            });
+            var dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(gyujto));
+            var downloadAnchor = document.createElement('a');
+            downloadAnchor.setAttribute("href", dataStr); downloadAnchor.setAttribute("download", "zenta_teljes_nyilvantartas.json");
+            document.body.appendChild(downloadAnchor); downloadAnchor.click(); downloadAnchor.remove();
+        }
+    </script>
+</body>
+</html>
