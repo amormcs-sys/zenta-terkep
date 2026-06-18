@@ -24,6 +24,7 @@
         .color-box { width: 20px; height: 10px; margin-right: 10px; border-radius: 2px; }
         .btn { width:100%; padding:8px; border:none; border-radius:4px; cursor:pointer; font-weight:bold; margin-top: 5px; }
         .admin-only { display: none; }
+        .popup-btn { padding: 4px 8px; margin-top: 5px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 11px; color: white; }
     </style>
 </head>
 <body>
@@ -55,6 +56,16 @@
             <button onclick="adminBelep()" class="btn" style="background:#6c757d; color:white;">Adminisztrátori Belépés</button>
         </div>
         <div id="admin-status" style="font-size:12px; color:green; font-weight:bold; margin-bottom:5px; display:none;">Módosítás engedélyezve (Admin)</div>
+        
+        <div class="admin-only" style="background: #f0f0f0; padding: 10px; border-radius: 5px; margin-bottom: 10px;">
+            <label style="font-size: 12px; font-weight: bold;">Aktív rajzolási réteg:</label>
+            <select id="rajz-reteg" class="search-input" style="margin-top:5px;">
+                <option value="ut">Közúti hálózat (Utak)</option>
+                <option value="viz">Vízvezeték</option>
+                <option value="kanal">Kanalizáció</option>
+            </select>
+        </div>
+
         <hr>
         <h5>Jelmagyarázat (Utak)</h5>
         <div class="legend-item"><div class="color-box" style="background: red;"></div> Piros: Nincs kész</div>
@@ -73,56 +84,48 @@
 
     <script>
         var map = L.map('map', { minZoom: 2, maxZoom: 18 }).setView([45.9275, 20.0889], 13);
+        var isAdmin = false;
 
-        // Minden csempeszerver link átállítva biztonságos HTTPS-re
-        var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            maxZoom: 19,
-            attribution: '© OpenStreetMap'
-        }).addTo(map);
-
-        var satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-            attribution: 'Tiles © Esri'
-        });
-
-        var geoSrbijaParcele = L.tileLayer.wms("https://geosrbija.rgz.gov.rs/geoserver/rgz/wms", {
-            layers: 'rgz:parcele',
-            format: 'image/png',
-            transparent: true,
-            version: '1.1.1',
-            attribution: '© GeoSrbija'
-        });
+        var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+        var satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { attribution: 'Tiles © Esri' });
+        var geoSrbijaParcele = L.tileLayer.wms("https://geosrbija.rgz.gov.rs/geoserver/rgz/wms", { layers: 'rgz:parcele', format: 'image/png', transparent: true, version: '1.1.1', attribution: '© GeoSrbija' });
 
         var utHalozat = new L.FeatureGroup().addTo(map);
-        var vizVezetek = new L.FeatureGroup();
-        var kanalizacio = new L.FeatureGroup();
-        var hidransok = new L.FeatureGroup();
+        var vizVezetek = new L.FeatureGroup().addTo(map);
+        var kanalizacio = new L.FeatureGroup().addTo(map);
+        var hidransok = new L.FeatureGroup().addTo(map);
 
         L.control.layers(
             { "Utcai nézet": osm, "Műholdas nézet": satellite },
             { "GeoSrbija Parcellák 🇷🇸": geoSrbijaParcele, "Közúti hálózat": utHalozat, "Vízvezetékek": vizVezetek, "Kanalizáció": kanalizacio, "Hidránsok": hidransok }
         ).addTo(map);
 
+        // Szerkesztő eszközök beállítása (vonalak módosítására is!)
         var drawControl = new L.Control.Draw({
             draw: { polyline: true, polygon: false, circle: false, marker: true, circlemarker: false, rectangle: false },
-            edit: { featureGroup: utHalozat }
+            edit: { featureGroup: utHalozat, remove: true }
         });
 
         function adminBelep() {
             var jelszo = prompt("Kérjük az adminisztrátori jelszót:");
             if (jelszo === "zenta2026") {
+                isAdmin = true;
                 document.getElementById("login-section").style.display = "none";
                 document.getElementById("admin-status").style.display = "block";
                 map.addControl(drawControl);
+                
+                // Engedélyezzük a szerkesztést a többi rétegen is
+                drawControl.options.edit.featureGroup = utHalozat; 
+
                 var adminGombok = document.querySelectorAll('.admin-only');
                 adminGombok.forEach(function(el) { el.style.display = 'block'; });
-                alert("Sikeres belépés!");
+                frissitPopupokat();
+                alert("Sikeres belépés! Most már kattintással is szerkesztheted az elemeket.");
             } else { alert("Hibás jelszó!"); }
         }
 
         function kataszterKeres() {
-            var opstinaId = "70890"; 
-            var koId = document.getElementById("kataszter-ko").value; 
-            var parcelaBr = document.getElementById("parcella-input").value; 
+            var opstinaId = "70890"; var koId = document.getElementById("kataszter-ko").value; var parcelaBr = document.getElementById("parcella-input").value; 
             if(!parcelaBr) { alert("Kérjük írd be a parcella számát!"); return; }
             var url = `https://katastar.rgz.gov.rs/eKatastarPublic/FindParcelResult.aspx?opstinaID=${opstinaId}&koID=${koId}&parcelaBr=${parcelaBr}`;
             window.open(url, '_blank');
@@ -137,106 +140,178 @@
             return link;
         }
 
+        // STÍLUS BEÁLLÍTÁSA STÁTUSZ ALAPJÁN
+        function sorszín(statusz, reteg) {
+            if (reteg === "viz") return "cyan";
+            if (reteg === "kanal") return "brown";
+            
+            if(statusz == "zold") return "green";
+            if(statusz == "lila") return "purple";
+            if(statusz == "sarga") return "yellow";
+            if(statusz == "narancs") return "orange";
+            if(statusz == "kek") return "blue";
+            return "red";
+        }
+
+        // POPUP TARTALOM GENERÁLÁSA (ADMIN VAGY SIMA)
+        function popupTartalom(data, layerId) {
+            var pop = `<b>${data.nev || "Névtelen"}</b><br>${data.leiras || ""}`;
+            if(data.kep) pop += `<br><br><img src="${data.kep}" width="260px" style="border-radius:4px;">`;
+            
+            if(isAdmin) {
+                pop += `<hr><button onclick="elemSzerkeszt('${layerId}')" class="popup-btn" style="background:#007bff; margin-right:5px;">Szerkesztés</button>`;
+                pop += `<button onclick="elemTorol('${layerId}')" class="popup-btn" style="background:#dc3545;">Törlés</button>`;
+            }
+            return pop;
+        }
+
+        function frissitPopupokat() {
+            [utHalozat, vizVezetek, kanalizacio, hidransok].forEach(function(group) {
+                group.eachLayer(function(layer) {
+                    if(layer.options.customData) {
+                        layer.bindPopup(popupTartalom(layer.options.customData, L.stamp(layer)));
+                    }
+                });
+            });
+        }
+
+        // ÚJ ELEM LÉTREHOZÁSA
         map.on(L.Draw.Event.CREATED, function (e) {
             var layer = e.layer;
             var tipus = e.layerType;
+            var valasztottReteg = document.getElementById("rajz-reteg").value;
+
             if (tipus === 'marker') {
-                var hNev = prompt("Pont megnevezése:", "Hidráns");
+                var hNev = prompt("Pont / Hidráns megnevezése:", "Hidráns");
                 var hLeiras = prompt("Megjegyzés:", "Működőképes");
-                layer.bindPopup(`<b>${hNev}</b><br>${hLeiras}`);
-                layer.options.customData = { nev: hNev, statusz: "hidrans", leiras: hLeiras, kep: "" };
+                layer.options.customData = { nev: hNev, statusz: "hidrans", leiras: hLeiras, kep: "", reteg: "hidrans" };
                 hidransok.addLayer(layer);
             } else {
-                var nev = prompt("Út neve / Dűlő száma:", "Új út");
-                var statusz = prompt("Állapot (piros / zold / lila / sarga / narancs / kek):", "piros");
-                var leiras = prompt("Karbantartás leírása:", "Felületi útkarbantartás");
-                var driveLinkRaw = prompt("Google Drive kép linkje:", "");
+                var nev = prompt("Megnevezés (Út neve / Cső átmérő):", "Új elem");
+                var statusz = "piros";
+                if(valasztottReteg === "ut") {
+                    statusz = prompt("Állapot (piros / zold / lila / sarga / narancs / kek):", "piros");
+                }
+                var leiras = prompt("Leírás / Megjegyzés:", "");
+                var driveLinkRaw = prompt("Google Drive kép linkje (ha van):", "");
                 var joDriveKep = fixDriveLink(driveLinkRaw);
-                var szin = "red";
-                if(statusz == "zold") szin = "green";
-                if(statusz == "lila") szin = "purple";
-                if(statusz == "sarga") szin = "yellow";
-                if(statusz == "narancs") szin = "orange";
-                if(statusz == "kek") szin = "blue";
-                layer.setStyle({ color: szin, weight: 5 });
-                var pop = `<b>${nev}</b><br>${leiras}`;
-                if(joDriveKep) pop += `<br><br><img src="${joDriveKep}" width="260px" style="border-radius:4px;">`;
-                layer.bindPopup(pop);
-                layer.options.customData = { nev: nev, statusz: statusz, leiras: leiras, kep: joDriveKep };
-                utHalozat.addLayer(layer);
+
+                layer.options.customData = { nev: nev, statusz: statusz, leiras: leiras, kep: joDriveKep, reteg: valasztottReteg };
+                
+                layer.setStyle({ color: sorszín(statusz, valasztottReteg), weight: 5 });
+
+                if(valasztottReteg === "viz") vizVezetek.addLayer(layer);
+                else if(valasztottReteg === "kanal") kanalizacio.addLayer(layer);
+                else utHalozat.addLayer(layer);
             }
+            frissitPopupokat();
         });
+
+        // ELEM TÖRLESE POPUPBÓL
+        window.elemTorol = function(layerId) {
+            if(confirm("Biztosan törölni akarod ezt az elemet?")) {
+                [utHalozat, vizVezetek, kanalizacio, hidransok].forEach(function(group) {
+                    var layer = group.getLayer(layerId);
+                    if(layer) { group.removeLayer(layer); }
+                });
+            }
+        };
+
+        // ELEM SZERKESZTÉSE POPUPBÓL
+        window.elemSzerkeszt = function(layerId) {
+            var celLayer = null;
+            [utHalozat, vizVezetek, kanalizacio, hidransok].forEach(function(group) {
+                if(group.getLayer(layerId)) celLayer = group.getLayer(layerId);
+            });
+
+            if(celLayer && celLayer.options.customData) {
+                var d = celLayer.options.customData;
+                var ujNev = prompt("Új megnevezés:", d.nev);
+                if(ujNev === null) return;
+                
+                var ujStatusz = d.statusz;
+                if(d.reteg === "ut") {
+                    ujStatusz = prompt("Új állapot (piros / zold / lila / sarga / narancs / kek):", d.statusz);
+                }
+                var ujLeiras = prompt("Új leírás:", d.leiras);
+                var ujKep = prompt("Új Google Drive kép link:", d.kep);
+
+                d.nev = ujNev;
+                d.statusz = ujStatusz;
+                d.leiras = ujLeiras;
+                d.kep = fixDriveLink(ujKep);
+
+                if(celLayer.setStyle) {
+                    celLayer.setStyle({ color: sorszín(ujStatusz, d.reteg) });
+                }
+                celLayer.setPopupContent(popupTartalom(d, layerId));
+                alert("Módosítások elmentve a térképen!");
+            }
+        };
 
         function kereses() {
             var keresettSzoveg = document.getElementById("search-input").value.toLowerCase();
             var talalat = false;
             utHalozat.eachLayer(function(layer) {
                 if (layer.options.customData && layer.options.customData.nev.toLowerCase().includes(keresettSzoveg)) {
-                    map.fitBounds(layer.getBounds());
-                    layer.openPopup();
-                    talalat = true;
+                    map.fitBounds(layer.getBounds()); layer.openPopup(); talalat = true;
                 }
             });
             if(!talalat) alert("Nincs ilyen nevű út!");
         }
 
+        // FÁJL BEOLVASÁS (MINDEN RÉTEGET HELYRETESZ)
         document.getElementById('fajlBeolvas').addEventListener('change', function(e) {
-            var fajl = e.target.files[0];
-            if (!fajl) return;
+            var fajl = e.target.files[0]; if (!fajl) return;
             var reader = new FileReader();
             reader.onload = function(e) {
                 var tartalom = e.target.result;
-                if (fajl.name.endsWith('.kml')) {
-                    var parser = new DOMParser();
-                    var xml = parser.parseFromString(tartalom, "text/xml");
-                    var geojson = toGeoJSON.kml(xml);
-                    L.geoJSON(geojson, {
-                        style: function() { return { color: "gray", weight: 4 }; },
-                        onEachFeature: function(feature, layer) {
-                            var nev = feature.properties.name || "Út";
-                            var leiras = feature.properties.description || "";
-                            layer.bindPopup(`<b>${nev}</b><br>${leiras}`);
-                            layer.options.customData = { nev: nev, statusz: "szurke", leiras: leiras, kep: "" };
-                            utHalozat.addLayer(layer);
-                        }
-                    });
-                } else if (fajl.name.endsWith('.json')) {
+                if (fajl.name.endsWith('.json')) {
                     var adatok = JSON.parse(tartalom);
+                    
+                    // Kitakarítjuk a meglévőket betöltés előtt
+                    utHalozat.clearLayers(); vizVezetek.clearLayers(); kanalizacio.clearLayers(); hidransok.clearLayers();
+
                     L.geoJSON(adatok, {
                         style: function(feature) {
-                            var s = feature.properties.statusz || "piros";
-                            var col = "red";
-                            if(s == "zold") col = "green";
-                            if(s == "lila") col = "purple";
-                            if(s == "sarga") col = "yellow";
-                            if(s == "narancs") col = "orange";
-                            if(s == "kek") col = "blue";
-                            return { color: col, weight: 5 };
+                            var p = feature.properties;
+                            return { color: sorszín(p.statusz, p.reteg), weight: 5 };
                         },
                         onEachFeature: function(feature, layer) {
                             var p = feature.properties;
-                            var pop = `<b>${p.nev || "Út"}</b><br>${p.leiras || ""}`;
-                            if(p.kep) pop += `<br><br><img src="${p.kep}" width="260px" style="border-radius:4px;">`;
-                            layer.bindPopup(pop);
                             layer.options.customData = p;
-                            if(p.statusz === "hidrans") { hidransok.addLayer(layer); } else { utHalozat.addLayer(layer); }
+                            
+                            if(p.reteg === "hidrans" || p.statusz === "hidrans") { hidransok.addLayer(layer); }
+                            else if(p.reteg === "viz") { vizVezetek.addLayer(layer); }
+                            else if(p.reteg === "kanal") { kanalizacio.addLayer(layer); }
+                            else { utHalozat.addLayer(layer); }
                         }
                     });
+                    frissitPopupokat();
+                    alert("Minden adat és réteg sikeresen betöltve!");
                 }
             };
             reader.readAsText(fajl);
         });
 
+        // ÖSSZES RÉTEG MENTÉSE EGYETLEN GEOJSON FÁJLBA
         function mentes() {
-            var adatok = utHalozat.toGeoJSON();
-            adatok.features.forEach(function(f, index) {
-                var layers = utHalozat.getLayers();
-                if(layers[index] && layers[index].options.customData) { f.properties = layers[index].options.customData; }
+            var gyujto = { type: "FeatureCollection", features: [] };
+
+            [utHalozat, vizVezetek, kanalizacio, hidransok].forEach(function(group) {
+                group.eachLayer(function(layer) {
+                    if(layer.options.customData) {
+                        var geojson = layer.toGeoJSON();
+                        geojson.properties = layer.options.customData;
+                        gyujto.features.push(geojson);
+                    }
+                });
             });
-            var dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(adatok));
+
+            var dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(gyujto));
             var downloadAnchor = document.createElement('a');
             downloadAnchor.setAttribute("href", dataStr);
-            downloadAnchor.setAttribute("download", "zenta_utak_mentes.json");
+            downloadAnchor.setAttribute("download", "zenta_teljes_nyilvantartas.json");
             document.body.appendChild(downloadAnchor);
             downloadAnchor.click();
             downloadAnchor.remove();
